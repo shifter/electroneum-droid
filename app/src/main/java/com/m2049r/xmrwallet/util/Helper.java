@@ -31,8 +31,9 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.VectorDrawable;
 import android.os.Environment;
 import android.support.v4.content.ContextCompat;
-import android.util.Log;
 import android.view.WindowManager;
+import android.view.animation.Animation;
+import android.view.animation.AnimationUtils;
 import android.view.inputmethod.InputMethodManager;
 
 import com.m2049r.xmrwallet.R;
@@ -48,27 +49,38 @@ import java.util.Locale;
 
 import javax.net.ssl.HttpsURLConnection;
 
+import timber.log.Timber;
+
 public class Helper {
-    static private final String TAG = "Helper";
     static private final String WALLET_DIR = "monerujo";
 
     static public int DISPLAY_DIGITS_INFO = 5;
-    static public int DISPLAY_DIGITS_SHORT = 5;
+
+    static public File getNewWalletDir(Context context) {
+        File newWalletDir = context.getDir("new", Context.MODE_PRIVATE);
+        Timber.d("new wallet directory is %s", newWalletDir.getAbsolutePath());
+        if (!newWalletDir.exists() || !newWalletDir.isDirectory()) {
+            String msg = newWalletDir.getAbsolutePath() + " is not a directory!";
+            Timber.e(msg);
+            throw new IllegalStateException(msg);
+        }
+        return newWalletDir;
+    }
 
     static public File getStorageRoot(Context context) {
         if (!isExternalStorageWritable()) {
             String msg = context.getString(R.string.message_strorage_not_writable);
-            Log.e(TAG, msg);
+            Timber.e(msg);
             throw new IllegalStateException(msg);
         }
         File dir = new File(Environment.getExternalStorageDirectory(), WALLET_DIR);
         if (!dir.exists()) {
-            Log.i(TAG, "Creating " + dir.getAbsolutePath());
+            Timber.i("Creating %s", dir.getAbsolutePath());
             dir.mkdirs(); // try to make it
         }
         if (!dir.isDirectory()) {
             String msg = "Directory " + dir.getAbsolutePath() + " does not exist.";
-            Log.e(TAG, msg);
+            Timber.e(msg);
             throw new IllegalStateException(msg);
         }
         return dir;
@@ -80,7 +92,7 @@ public class Helper {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
             if (context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                     == PackageManager.PERMISSION_DENIED) {
-                Log.w(TAG, "Permission denied to WRITE_EXTERNAL_STORAGE - requesting it");
+                Timber.w("Permission denied to WRITE_EXTERNAL_STORAGE - requesting it");
                 String[] permissions = {Manifest.permission.WRITE_EXTERNAL_STORAGE};
                 context.requestPermissions(permissions, PERMISSIONS_REQUEST_WRITE_EXTERNAL_STORAGE);
                 return false;
@@ -92,13 +104,13 @@ public class Helper {
         }
     }
 
-    static public final int PERMISSIONS_REQUEST_CAMERA = 1;
+    static public final int PERMISSIONS_REQUEST_CAMERA = 7;
 
     static public boolean getCameraPermission(Activity context) {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
             if (context.checkSelfPermission(Manifest.permission.CAMERA)
                     == PackageManager.PERMISSION_DENIED) {
-                Log.w(TAG, "Permission denied for CAMERA - requesting it");
+                Timber.w("Permission denied for CAMERA - requesting it");
                 String[] permissions = {Manifest.permission.CAMERA};
                 context.requestPermissions(permissions, PERMISSIONS_REQUEST_CAMERA);
                 return false;
@@ -113,7 +125,7 @@ public class Helper {
     static public File getWalletFile(Context context, String aWalletName) {
         File walletDir = getStorageRoot(context);
         File f = new File(walletDir, aWalletName);
-        Log.d(TAG, "wallet = " + f.getAbsolutePath() + " size=" + f.length());
+        Timber.d("wallet= %s size= %d", f.getAbsolutePath(), f.length());
         return f;
     }
 
@@ -174,9 +186,14 @@ public class Helper {
     static public String getFormattedAmount(double amount, boolean isXmr) {
         // at this point selection is XMR in case of error
         String displayB;
-        if (isXmr) { // not XMR
-            displayB = String.format(Locale.US, "%,.5f", amount);
-        } else { // XMR
+        if (isXmr) { // XMR
+            long xmr = Wallet.getAmountFromDouble(amount);
+            if ((xmr > 0) || (amount == 0)) {
+                displayB = String.format(Locale.US, "%,.5f", amount);
+            } else {
+                displayB = null;
+            }
+        } else { // not XMR
             displayB = String.format(Locale.US, "%,.2f", amount);
         }
         return displayB;
@@ -222,11 +239,11 @@ public class Helper {
             }
             return sb.toString();
         } catch (SocketTimeoutException ex) {
-            Log.w(TAG, "C " + ex.getLocalizedMessage());
+            Timber.w("C %s", ex.getLocalizedMessage());
         } catch (MalformedURLException ex) {
-            Log.e(TAG, "A " + ex.getLocalizedMessage());
+            Timber.e("A %s", ex.getLocalizedMessage());
         } catch (IOException ex) {
-            Log.e(TAG, "B " + ex.getLocalizedMessage());
+            Timber.e("B %s", ex.getLocalizedMessage());
         } finally {
             if (urlConnection != null) {
                 urlConnection.disconnect();
@@ -240,4 +257,18 @@ public class Helper {
         ClipData clip = ClipData.newPlainText(label, text);
         clipboardManager.setPrimaryClip(clip);
     }
+
+    static private Animation ShakeAnimation;
+
+    static public Animation getShakeAnimation(Context context) {
+        if (ShakeAnimation == null) {
+            synchronized (Helper.class) {
+                if (ShakeAnimation == null) {
+                    ShakeAnimation = AnimationUtils.loadAnimation(context, R.anim.shake);
+                }
+            }
+        }
+        return ShakeAnimation;
+    }
+
 }

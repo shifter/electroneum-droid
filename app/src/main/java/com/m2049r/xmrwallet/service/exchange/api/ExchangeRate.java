@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 m2049r
+ * Copyright (c) 2017 m2049r et al.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,16 +14,16 @@
  * limitations under the License.
  */
 
-package com.m2049r.xmrwallet.util;
+package com.m2049r.xmrwallet.service.exchange.api;
 
-public class BarcodeData {
-    public String address = null;
-    public String paymentId = null;
-    public long amount = -1;
+public interface ExchangeRate {
 
-    public BarcodeData(String address, String paymentId, long amount) {
-        this.address = address;
-        this.paymentId = paymentId;
-        this.amount = amount;
-    }
+    String getServiceName();
+
+    String getBaseCurrency();
+
+    String getQuoteCurrency();
+
+    double getRate();
+
 }

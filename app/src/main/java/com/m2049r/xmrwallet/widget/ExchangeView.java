@@ -16,14 +16,15 @@
 
 // based on https://code.tutsplus.com/tutorials/creating-compound-views-on-android--cms-22889
 
-package com.m2049r.xmrwallet.layout;
+package com.m2049r.xmrwallet.widget;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.support.design.widget.TextInputLayout;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.AttributeSet;
-import android.util.Log;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -37,12 +38,25 @@ import android.widget.TextView;
 
 import com.m2049r.xmrwallet.R;
 import com.m2049r.xmrwallet.model.Wallet;
+import com.m2049r.xmrwallet.service.exchange.api.ExchangeApi;
+import com.m2049r.xmrwallet.service.exchange.api.ExchangeCallback;
+import com.m2049r.xmrwallet.service.exchange.api.ExchangeRate;
+import com.m2049r.xmrwallet.service.exchange.kraken.ExchangeApiImpl;
 import com.m2049r.xmrwallet.util.Helper;
+import com.m2049r.xmrwallet.util.OkHttpClientSingleton;
 
 import java.util.Locale;
 
-public class ExchangeView extends LinearLayout implements AsyncExchangeRate.Listener {
-    static final String TAG = "ExchangeView";
+import timber.log.Timber;
+
+// TODO combine this with ExchangeTextView
+
+public class ExchangeView extends LinearLayout
+        implements NumberPadView.NumberPadListener {
+
+    public void enableSoftKeyboard(final boolean isEnabled) {
+        etAmount.getEditText().setShowSoftInputOnFocus(isEnabled);
+    }
 
     public boolean focus() {
         return etAmount.requestFocus();
@@ -194,7 +208,7 @@ public class ExchangeView extends LinearLayout implements AsyncExchangeRate.List
 
             @Override
             public void onNothingSelected(AdapterView<?> parentView) {
-                // nothing (yet?)
+                // nothing
             }
         });
 
@@ -222,11 +236,7 @@ public class ExchangeView extends LinearLayout implements AsyncExchangeRate.List
             @Override
             public void afterTextChanged(Editable editable) {
                 etAmount.setError(null);
-                if ((xmrAmount != null) || (notXmrAmount != null)) {
-                    tvAmountB.setText("--");
-                    setXmr(null);
-                    notXmrAmount = null;
-                }
+                //doExchange();
             }
 
             @Override
@@ -245,7 +255,7 @@ public class ExchangeView extends LinearLayout implements AsyncExchangeRate.List
 
     public boolean checkEnteredAmount() {
         boolean ok = true;
-        Log.d(TAG, "checkEnteredAmount");
+        Timber.d("checkEnteredAmount");
         String amountEntry = etAmount.getEditText().getText().toString();
         if (!amountEntry.isEmpty()) {
             try {
@@ -273,15 +283,63 @@ public class ExchangeView extends LinearLayout implements AsyncExchangeRate.List
 
     public void doExchange() {
         tvAmountB.setText("--");
-        // TODO cache & use cached exchange rate here
-        startExchange();
+        // use cached exchange rate if we have it
+        if (!isExchangeInProgress()) {
+            String enteredCurrencyA = (String) sCurrencyA.getSelectedItem();
+            String enteredCurrencyB = (String) sCurrencyB.getSelectedItem();
+            if ((enteredCurrencyA + enteredCurrencyB).equals(assetPair)) {
+                if (prepareExchange()) {
+                    exchange(assetRate);
+                } else {
+                    clearAmounts();
+                }
+            } else {
+                clearAmounts();
+                startExchange();
+            }
+        } else {
+            clearAmounts();
+        }
     }
+
+    private void clearAmounts() {
+        if ((xmrAmount != null) || (notXmrAmount != null)) {
+            tvAmountB.setText("--");
+            setXmr(null);
+            notXmrAmount = null;
+        }
+    }
+
+    private final ExchangeApi exchangeApi = new ExchangeApiImpl(OkHttpClientSingleton.getOkHttpClient());
 
     void startExchange() {
         showProgress();
         String currencyA = (String) sCurrencyA.getSelectedItem();
         String currencyB = (String) sCurrencyB.getSelectedItem();
-        new AsyncExchangeRate(this).execute(currencyA, currencyB);
+        exchangeApi.queryExchangeRate(currencyA, currencyB,
+                new ExchangeCallback() {
+                    @Override
+                    public void onSuccess(final ExchangeRate exchangeRate) {
+                        if (isAttachedToWindow())
+                            new Handler(Looper.getMainLooper()).post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    exchange(exchangeRate);
+                                }
+                            });
+                    }
+
+                    @Override
+                    public void onError(final Exception e) {
+                        Timber.e(e.getLocalizedMessage());
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                exchangeFailed();
+                            }
+                        });
+                    }
+                });
     }
 
     public void exchange(double rate) {
@@ -304,7 +362,7 @@ public class ExchangeView extends LinearLayout implements AsyncExchangeRate.List
             }
             tvAmountB.setText(xmrAmount);
         } else { // no XMR currency - cannot happen!
-            Log.e(TAG, "No XMR currency!");
+            Timber.e("No XMR currency!");
             setXmr(null);
             notXmrAmount = null;
             return;
@@ -312,7 +370,7 @@ public class ExchangeView extends LinearLayout implements AsyncExchangeRate.List
     }
 
     boolean prepareExchange() {
-        Log.d(TAG, "prepareExchange()");
+        Timber.d("prepareExchange()");
         if (checkEnteredAmount()) {
             String enteredAmount = etAmount.getEditText().getText().toString();
             if (!enteredAmount.isEmpty()) {
@@ -322,7 +380,7 @@ public class ExchangeView extends LinearLayout implements AsyncExchangeRate.List
                     cleanAmount = Helper.getDisplayAmount(Wallet.getAmountFromString(enteredAmount));
                     setXmr(cleanAmount);
                     notXmrAmount = null;
-                    Log.d(TAG, "cleanAmount = " + cleanAmount);
+                    Timber.d("cleanAmount = %s", cleanAmount);
                 } else if (getCurrencyB() == 0) { // we use B & 0 here for the else below ...
                     // sanitize the input
                     double amountA = Double.parseDouble(enteredAmount);
@@ -330,13 +388,12 @@ public class ExchangeView extends LinearLayout implements AsyncExchangeRate.List
                     setXmr(null);
                     notXmrAmount = cleanAmount;
                 } else { // no XMR currency - cannot happen!
-                    Log.e(TAG, "No XMR currency!");
+                    Timber.e("No XMR currency!");
                     setXmr(null);
                     notXmrAmount = null;
                     return false;
                 }
-                Log.d(TAG, "prepareExchange() " + cleanAmount);
-                //etAmount.getEditText().setText(cleanAmount); // display what we use
+                Timber.d("prepareExchange() %s", cleanAmount);
             } else {
                 setXmr("");
                 notXmrAmount = "";
@@ -349,7 +406,6 @@ public class ExchangeView extends LinearLayout implements AsyncExchangeRate.List
         }
     }
 
-    // callback from AsyncExchangeRate when it failed getting a rate
     public void exchangeFailed() {
         hideProgress();
         exchange(0);
@@ -358,24 +414,33 @@ public class ExchangeView extends LinearLayout implements AsyncExchangeRate.List
         }
     }
 
-    // callback from AsyncExchangeRate when we have a rate
-    public void exchange(String currencyA, String currencyB, double rate) {
+    String assetPair = null;
+    double assetRate = 0;
+
+    public void exchange(ExchangeRate exchangeRate) {
         hideProgress();
         // first, make sure this is what we want
         String enteredCurrencyA = (String) sCurrencyA.getSelectedItem();
         String enteredCurrencyB = (String) sCurrencyB.getSelectedItem();
-        if (!currencyA.equals(enteredCurrencyA) || !currencyB.equals(enteredCurrencyB)) {
+        if (!exchangeRate.getBaseCurrency().equals(enteredCurrencyA)
+                || !exchangeRate.getQuoteCurrency().equals(enteredCurrencyB)) {
             // something's wrong
-            Log.e(TAG, "Currencies don't match!");
+            Timber.e("Currencies don't match!");
             return;
         }
+        assetPair = enteredCurrencyA + enteredCurrencyB;
+        assetRate = exchangeRate.getRate();
         if (prepareExchange()) {
-            exchange(rate);
+            exchange(exchangeRate.getRate());
         }
     }
 
     private void showProgress() {
         pbExchange.setVisibility(View.VISIBLE);
+    }
+
+    private boolean isExchangeInProgress() {
+        return pbExchange.getVisibility() == View.VISIBLE;
     }
 
     private void hideProgress() {
@@ -411,5 +476,32 @@ public class ExchangeView extends LinearLayout implements AsyncExchangeRate.List
 
     public void setOnFailedExchangeListener(OnFailedExchangeListener listener) {
         onFailedExchangeListener = listener;
+    }
+
+    @Override
+    public void onDigitPressed(final int digit) {
+        etAmount.getEditText().append(String.valueOf(digit));
+    }
+
+    @Override
+    public void onPointPressed() {
+        //TODO locale?
+        if (etAmount.getEditText().getText().toString().indexOf('.') == -1) {
+            etAmount.getEditText().append(".");
+        }
+    }
+
+    @Override
+    public void onBackSpacePressed() {
+        Editable editable = etAmount.getEditText().getText();
+        int length = editable.length();
+        if (length > 0) {
+            editable.delete(length - 1, length);
+        }
+    }
+
+    @Override
+    public void onClearAll() {
+        etAmount.getEditText().getText().clear();
     }
 }
